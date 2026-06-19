@@ -1,11 +1,10 @@
 from qgis.PyQt.QtWidgets import (
-    QDialog, QVBoxLayout, QFormLayout, QHBoxLayout,
-    QDoubleSpinBox, QPushButton, QCheckBox, QLabel, QMessageBox,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
+    QDoubleSpinBox, QPushButton, QCheckBox, QLabel, QLineEdit, QComboBox,
+    QMessageBox, QTabWidget, QWidget, QTableWidget, QTableWidgetItem,
+    QFileDialog,
 )
-from qgis.core import (
-    QgsProject, QgsVectorLayer, QgsFeature,
-    QgsMapLayerProxyModel,
-)
+from qgis.core import QgsProject, QgsMapLayerProxyModel
 from qgis.gui import QgsMapLayerComboBox
 
 from .map_tools import DrawLineMapTool, PickAnchorMapTool
@@ -13,6 +12,8 @@ from .raster_sampler import sample_profile
 from .geom_transform import ProfileTransform
 from .grid_builder import build_grid_layer, apply_grid_symbology
 from .profile_layer_builder import build_profile_layer, apply_profile_symbology
+from .line_manager import CrossSectionLineManager
+from .chart_widget import ProfileChartWidget
 
 MAX_SAMPLE_COUNT = 8000
 
@@ -22,7 +23,7 @@ class ProfileToolDialog(QDialog):
         super().__init__(parent)
         self.iface = iface
         self.canvas = iface.mapCanvas()
-        self.setWindowTitle('Create Profile Plot')
+        self.setWindowTitle('Profile Tool')
 
         self.line_geom = None
         self.line_crs = None
@@ -30,6 +31,7 @@ class ProfileToolDialog(QDialog):
         self.draw_tool = None
         self.pick_tool = None
         self._previous_map_tool = None
+        self.line_manager = CrossSectionLineManager()
 
         self._build_ui()
 
@@ -38,50 +40,141 @@ class ProfileToolDialog(QDialog):
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
-        # Line source
-        layout.addWidget(QLabel('<b>1. Cross-section line</b>'))
-        line_row = QHBoxLayout()
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
+        self.tabs.addTab(self._build_profile_tab(), 'Profile')
+        self.tabs.addTab(self._build_table_tab(), 'Table')
+        self.tabs.addTab(self._build_settings_tab(), 'Settings')
+
+        close_btn = QPushButton('Close')
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
+
+    def _build_profile_tab(self):
+        tab = QWidget()
+        outer = QHBoxLayout(tab)
+
+        # ---- left: chart + toolbar + crosshair readout ----
+        left = QVBoxLayout()
+        self.chart = ProfileChartWidget()
+        self.chart.mouse_move_callback = self._on_chart_mouse_move
+        left.addWidget(self.chart, stretch=1)
+
+        toolbar_row = QHBoxLayout()
+        reset_btn = QPushButton('Reset view')
+        reset_btn.clicked.connect(self.chart.reset_view)
+        toolbar_row.addWidget(reset_btn)
+
+        toolbar_row.addWidget(QLabel('Y axis:'))
+        self.y_field_combo = QComboBox()
+        self.y_field_combo.addItem('Height')
+        toolbar_row.addWidget(self.y_field_combo)
+
+        self.interp_check = QCheckBox('Interpolated profile')
+        self.interp_check.setChecked(True)
+        self.interp_check.toggled.connect(self._update_chart)
+        toolbar_row.addWidget(self.interp_check)
+
+        self.export_format_combo = QComboBox()
+        self.export_format_combo.addItems(['Graph - PNG', 'Graph - SVG', 'Graph - PDF'])
+        toolbar_row.addWidget(self.export_format_combo)
+
+        save_as_btn = QPushButton('Save as')
+        save_as_btn.clicked.connect(self._on_save_chart_image)
+        toolbar_row.addWidget(save_as_btn)
+        left.addLayout(toolbar_row)
+
+        readout_row = QHBoxLayout()
+        readout_row.addWidget(QLabel('X:'))
+        self.x_readout = QLineEdit('/')
+        self.x_readout.setReadOnly(True)
+        readout_row.addWidget(self.x_readout)
+        readout_row.addWidget(QLabel('Y:'))
+        self.y_readout = QLineEdit('/')
+        self.y_readout.setReadOnly(True)
+        readout_row.addWidget(self.y_readout)
+        left.addLayout(readout_row)
+
+        outer.addLayout(left, stretch=3)
+
+        # ---- right: range, source, options ----
+        right = QVBoxLayout()
+
+        range_box = QGroupBox('Y axis range')
+        range_form = QFormLayout(range_box)
+        self.chart_y_max = QDoubleSpinBox()
+        self.chart_y_max.setRange(-100_000, 100_000)
+        self.chart_y_max.setDecimals(1)
+        self.chart_y_max.valueChanged.connect(self._on_chart_range_changed)
+        range_form.addRow('maximum', self.chart_y_max)
+        self.chart_y_min = QDoubleSpinBox()
+        self.chart_y_min.setRange(-100_000, 100_000)
+        self.chart_y_min.setDecimals(1)
+        self.chart_y_min.valueChanged.connect(self._on_chart_range_changed)
+        range_form.addRow('minimum', self.chart_y_min)
+        right.addWidget(range_box)
+
+        source_box = QGroupBox('Source')
+        source_layout = QVBoxLayout(source_box)
         self.line_layer_combo = QgsMapLayerComboBox()
         self.line_layer_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
-        line_row.addWidget(self.line_layer_combo)
+        source_layout.addWidget(self.line_layer_combo)
         draw_btn = QPushButton('Draw New Line')
         draw_btn.clicked.connect(self._activate_draw_tool)
-        line_row.addWidget(draw_btn)
-        layout.addLayout(line_row)
-
+        source_layout.addWidget(draw_btn)
         self.line_status_label = QLabel('No line drawn yet.')
-        layout.addWidget(self.line_status_label)
+        source_layout.addWidget(self.line_status_label)
+        sample_btn = QPushButton('Sample Elevation')
+        sample_btn.clicked.connect(self._sample_elevation)
+        source_layout.addWidget(sample_btn)
+        self.sample_status_label = QLabel('No samples yet.')
+        source_layout.addWidget(self.sample_status_label)
+        right.addWidget(source_box)
 
-        self.save_line_btn = QPushButton('Save Drawn Line as Layer')
-        self.save_line_btn.setEnabled(False)
-        self.save_line_btn.clicked.connect(self._save_drawn_line_layer)
-        layout.addWidget(self.save_line_btn)
+        options_box = QGroupBox('Options')
+        options_form = QFormLayout(options_box)
+        self.selection_mode_combo = QComboBox()
+        self.selection_mode_combo.addItems(['Temporary polyline', 'Existing layer'])
+        options_form.addRow('Selection', self.selection_mode_combo)
+        self.show_cursor_check = QCheckBox('Show cursor')
+        self.show_cursor_check.setChecked(True)
+        options_form.addRow('', self.show_cursor_check)
+        self.link_canvas_check = QCheckBox('Link mouse position on graph with canvas')
+        options_form.addRow('', self.link_canvas_check)
+        right.addWidget(options_box)
 
-        # DEM sampling
-        layout.addWidget(QLabel('<b>2. Sample elevation (DEM)</b>'))
-        dem_form = QFormLayout()
+        right.addStretch(1)
+        outer.addLayout(right, stretch=1)
+
+        return tab
+
+    def _build_table_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        self.samples_table = QTableWidget(0, 3)
+        self.samples_table.setHorizontalHeaderLabels(['Distance (m)', 'Elevation', 'Valid'])
+        layout.addWidget(self.samples_table)
+        return tab
+
+    def _build_settings_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        dem_box = QGroupBox('DEM')
+        dem_form = QFormLayout(dem_box)
         self.raster_combo = QgsMapLayerComboBox()
         self.raster_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
         dem_form.addRow('DEM layer:', self.raster_combo)
-
         self.sample_interval = QDoubleSpinBox()
         self.sample_interval.setRange(0.01, 100_000)
         self.sample_interval.setDecimals(2)
         self.sample_interval.setValue(10)
         self.sample_interval.setSuffix(' m')
         dem_form.addRow('Sample interval:', self.sample_interval)
-        layout.addLayout(dem_form)
+        layout.addWidget(dem_box)
 
-        sample_btn = QPushButton('Sample Elevation')
-        sample_btn.clicked.connect(self._sample_elevation)
-        layout.addWidget(sample_btn)
-
-        self.sample_status_label = QLabel('No samples yet.')
-        layout.addWidget(self.sample_status_label)
-
-        # Vertical scale / grid params
-        layout.addWidget(QLabel('<b>3. Grid &amp; vertical scale</b>'))
-        form = QFormLayout()
+        grid_box = QGroupBox('Grid / vertical scale')
+        form = QFormLayout(grid_box)
 
         self.x_segment = QDoubleSpinBox()
         self.x_segment.setRange(0.1, 100_000)
@@ -120,18 +213,18 @@ class ProfileToolDialog(QDialog):
         self.true_scale_check.toggled.connect(self.exaggeration.setDisabled)
         form.addRow('', self.true_scale_check)
 
-        layout.addLayout(form)
+        layout.addWidget(grid_box)
 
-        # Plot
-        layout.addWidget(QLabel('<b>4. Plot</b>'))
-        self.plot_btn = QPushButton('Plot Profile (click map to place)')
-        self.plot_btn.setEnabled(False)
-        self.plot_btn.clicked.connect(self._activate_pick_tool)
-        layout.addWidget(self.plot_btn)
+        export_box = QGroupBox('Map export')
+        export_layout = QVBoxLayout(export_box)
+        self.export_to_map_btn = QPushButton('Export Profile to Map (grid + line)...')
+        self.export_to_map_btn.setEnabled(False)
+        self.export_to_map_btn.clicked.connect(self._on_export_to_map)
+        export_layout.addWidget(self.export_to_map_btn)
+        layout.addWidget(export_box)
 
-        close_btn = QPushButton('Close')
-        close_btn.clicked.connect(self.close)
-        layout.addWidget(close_btn)
+        layout.addStretch(1)
+        return tab
 
     # ---- Line drawing --------------------------------------------------
 
@@ -145,22 +238,10 @@ class ProfileToolDialog(QDialog):
         self.line_crs = QgsProject.instance().crs()
         length = geom.length()
         self.line_status_label.setText(f'Drawn line: {length:.1f} m, {geom.constGet().nCoordinates()} vertices.')
-        self.save_line_btn.setEnabled(True)
         self._restore_map_tool()
 
     def _restore_map_tool(self):
         self.canvas.setMapTool(self._previous_map_tool)
-
-    def _save_drawn_line_layer(self):
-        if self.line_geom is None:
-            return
-        crs = QgsProject.instance().crs().authid()
-        layer = QgsVectorLayer(f'LineString?crs={crs}', 'Cross Section Line', 'memory')
-        feature = QgsFeature()
-        feature.setGeometry(self.line_geom)
-        layer.dataProvider().addFeatures([feature])
-        layer.updateExtents()
-        QgsProject.instance().addMapLayer(layer)
 
     def _get_selected_line_geometry(self):
         layer = self.line_layer_combo.currentLayer()
@@ -205,13 +286,15 @@ class ProfileToolDialog(QDialog):
 
         self.line_geom = geom
         self.line_crs = crs
+        self.line_manager.ensure_layer(geom, crs.authid())
+
         self.samples = sample_profile(geom, raster_layer, interval, crs)
 
         valid = [s for s in self.samples if s[2]]
         n_gaps = sum(1 for s in self.samples if not s[2])
         if not valid:
             QMessageBox.warning(self, 'No Data', 'No valid elevation samples were found along this line.')
-            self.plot_btn.setEnabled(False)
+            self.export_to_map_btn.setEnabled(False)
             return
 
         elevations = [e for _, e, _ in valid]
@@ -221,18 +304,65 @@ class ProfileToolDialog(QDialog):
         self.sample_status_label.setText(
             f'{len(self.samples)} samples, {n_gaps} nodata gap(s).'
         )
-        self.plot_btn.setEnabled(True)
+        self.export_to_map_btn.setEnabled(True)
 
-    # ---- Plot / anchor ---------------------------------------------------
+        self._sync_chart_range_from_settings()
+        self._update_chart()
+        self._populate_samples_table()
 
-    def _activate_pick_tool(self):
+    # ---- Profile chart ---------------------------------------------------
+
+    def _sync_chart_range_from_settings(self):
+        self.chart_y_min.setValue(self.y_min.value())
+        self.chart_y_max.setValue(self.y_max.value())
+
+    def _update_chart(self):
+        if not self.samples:
+            return
+        self.chart.set_data(self.samples, interpolated=self.interp_check.isChecked())
+        self.chart.set_y_range(self.chart_y_min.value(), self.chart_y_max.value())
+
+    def _on_chart_range_changed(self, _value):
+        self.chart.set_y_range(self.chart_y_min.value(), self.chart_y_max.value())
+
+    def _on_chart_mouse_move(self, x, y):
+        if x is None or y is None or not self.show_cursor_check.isChecked():
+            self.x_readout.setText('/')
+            self.y_readout.setText('/')
+            return
+        self.x_readout.setText(f'{x:.2f}')
+        self.y_readout.setText(f'{y:.2f}')
+
+    def _on_save_chart_image(self):
+        fmt_label = self.export_format_combo.currentText()
+        fmt = fmt_label.split('-')[-1].strip().lower()
+        path, _ = QFileDialog.getSaveFileName(self, 'Save Chart', f'profile.{fmt}', f'{fmt.upper()} (*.{fmt})')
+        if not path:
+            return
+        self.chart.save_figure(path, fmt)
+
+    # ---- Table tab ---------------------------------------------------------
+
+    def _populate_samples_table(self):
+        table = self.samples_table
+        table.setRowCount(len(self.samples))
+        table.setUpdatesEnabled(False)
+        for row, (distance, elevation, is_valid) in enumerate(self.samples):
+            table.setItem(row, 0, QTableWidgetItem(f'{distance:.2f}'))
+            table.setItem(row, 1, QTableWidgetItem(f'{elevation:.2f}' if is_valid else ''))
+            table.setItem(row, 2, QTableWidgetItem('yes' if is_valid else 'no'))
+        table.setUpdatesEnabled(True)
+
+    # ---- Export to map ---------------------------------------------------
+
+    def _on_export_to_map(self):
         if not self.samples:
             return
         self._previous_map_tool = self.canvas.mapTool()
-        self.pick_tool = PickAnchorMapTool(self.canvas, self._on_anchor_picked)
+        self.pick_tool = PickAnchorMapTool(self.canvas, self._on_export_anchor_picked)
         self.canvas.setMapTool(self.pick_tool)
 
-    def _on_anchor_picked(self, point):
+    def _on_export_anchor_picked(self, point):
         self._restore_map_tool()
 
         y_min = self.y_min.value()
@@ -270,7 +400,7 @@ class ProfileToolDialog(QDialog):
         self.canvas.setExtent(extent)
         self.canvas.refresh()
 
-        message = 'Profile plotted.'
+        message = 'Profile exported to map.'
         if out_of_range:
             message += ' Note: some elevations fall outside the Y Min/Max range.'
         self.iface.messageBar().pushSuccess('Profile Plot', message)
