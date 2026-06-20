@@ -7,6 +7,7 @@ try:
     except ImportError:
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
     from matplotlib.figure import Figure
+    from matplotlib.transforms import blended_transform_factory
     MATPLOTLIB_AVAILABLE = True
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
@@ -20,7 +21,12 @@ class ProfileChartWidget(QWidget):
         super().__init__(parent)
         self.mouse_move_callback = None
         self.click_callback = None
+        self.show_cursor = True
         self._series = []
+        self._crosshair_v = None
+        self._crosshair_h = None
+        self._crosshair_xtext = None
+        self._crosshair_ytext = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -81,6 +87,7 @@ class ProfileChartWidget(QWidget):
         if len(series) > 1:
             self.axes.legend()
 
+        self._init_crosshair()
         self.canvas.draw_idle()
 
     def _plot_run(self, x, y, interpolated, color, label=None):
@@ -107,13 +114,57 @@ class ProfileChartWidget(QWidget):
 
     # ---- crosshair --------------------------------------------------------
 
+    def _init_crosshair(self):
+        """(Re)create the crosshair artists; set_data's axes.clear() wipes
+        out any previous ones, so this is called after every redraw."""
+        self._crosshair_v = self.axes.axvline(color='black', linewidth=1, visible=False)
+        self._crosshair_h = self.axes.axhline(color='red', linewidth=1, visible=False)
+        self._crosshair_xtext = self.axes.text(
+            0, 0.02, '', transform=blended_transform_factory(self.axes.transData, self.axes.transAxes),
+            va='bottom', ha='left', fontsize=8,
+            bbox=dict(boxstyle='round', fc='white', ec='black', alpha=0.85), visible=False,
+        )
+        self._crosshair_ytext = self.axes.text(
+            0.02, 0, '', transform=blended_transform_factory(self.axes.transAxes, self.axes.transData),
+            va='bottom', ha='left', fontsize=8,
+            bbox=dict(boxstyle='round', fc='white', ec='black', alpha=0.85), visible=False,
+        )
+
+    def hide_crosshair(self):
+        for artist in (self._crosshair_v, self._crosshair_h, self._crosshair_xtext, self._crosshair_ytext):
+            if artist is not None:
+                artist.set_visible(False)
+        if self.canvas is not None:
+            self.canvas.draw_idle()
+
+    def _update_crosshair(self, x, y):
+        if self._crosshair_v is None:
+            return
+        self._crosshair_v.set_xdata([x, x])
+        self._crosshair_v.set_visible(True)
+        self._crosshair_h.set_ydata([y, y])
+        self._crosshair_h.set_visible(True)
+        self._crosshair_xtext.set_position((x, 0.02))
+        self._crosshair_xtext.set_text(f'X : {x:.3f}')
+        self._crosshair_xtext.set_visible(True)
+        self._crosshair_ytext.set_position((0.02, y))
+        self._crosshair_ytext.set_text(f'Y : {y:.3f}')
+        self._crosshair_ytext.set_visible(True)
+        self.canvas.draw_idle()
+
     def _on_mouse_move(self, event):
         if event.xdata is None or event.ydata is None:
+            self.hide_crosshair()
+            if self.mouse_move_callback is not None:
+                self.mouse_move_callback(None, None)
             return
+        if self.show_cursor:
+            self._update_crosshair(event.xdata, event.ydata)
         if self.mouse_move_callback is not None:
             self.mouse_move_callback(event.xdata, event.ydata)
 
     def _on_mouse_leave(self, event):
+        self.hide_crosshair()
         if self.mouse_move_callback is not None:
             self.mouse_move_callback(None, None)
 

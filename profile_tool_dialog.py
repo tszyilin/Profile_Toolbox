@@ -45,7 +45,7 @@ class ProfileToolDialog(QDialog):
         self.pick_tool = None
         self.select_tool = None
         self._previous_map_tool = None
-        self.line_manager = CrossSectionLineManager()
+        self.line_manager = CrossSectionLineManager(self.canvas)
         self._connected_layers = {}
 
         self._last_hover_x = None
@@ -191,6 +191,7 @@ class ProfileToolDialog(QDialog):
         options_form.addRow('Selection', self.selection_mode_combo)
         self.show_cursor_check = QCheckBox('Show cursor')
         self.show_cursor_check.setChecked(True)
+        self.show_cursor_check.toggled.connect(self._on_show_cursor_toggled)
         options_form.addRow('', self.show_cursor_check)
         self.link_canvas_check = QCheckBox('Link mouse position on graph with canvas')
         self.link_canvas_check.toggled.connect(
@@ -240,6 +241,7 @@ class ProfileToolDialog(QDialog):
         self.sample_interval.setSuffix(' m')
         sampling_form.addRow('Sample interval:', self.sample_interval)
         self.live_update_check = QCheckBox('Live update while drawing')
+        self.live_update_check.setChecked(True)
         sampling_form.addRow('', self.live_update_check)
         self.add_point_check = QCheckBox("Save selected points in layer 'profile_points'")
         sampling_form.addRow('', self.add_point_check)
@@ -572,7 +574,7 @@ class ProfileToolDialog(QDialog):
         primary_geom, primary_crs, _label = geoms[0]
         self.line_geom = primary_geom
         self.line_crs = primary_crs
-        self.line_manager.ensure_layer(primary_geom, primary_crs.authid())
+        self.line_manager.update(primary_geom, primary_crs.authid())
 
         self._series = []
         for geom, crs, label in geoms:
@@ -641,6 +643,11 @@ class ProfileToolDialog(QDialog):
 
     def _on_chart_range_changed(self, _value):
         self.chart.set_y_range(self.chart_y_min.value(), self.chart_y_max.value())
+
+    def _on_show_cursor_toggled(self, checked):
+        self.chart.show_cursor = checked
+        if not checked:
+            self.chart.hide_crosshair()
 
     def _on_chart_mouse_move(self, x, y):
         self._last_hover_x = x
@@ -825,6 +832,7 @@ class ProfileToolDialog(QDialog):
         if self.canvas.mapTool() in (self.draw_tool, self.pick_tool, self.select_tool):
             self.canvas.unsetMapTool(self.canvas.mapTool())
         self._hover_marker.reset(QgsWkbTypes.PointGeometry)
+        self.line_manager.reset()
         for layer in list(self._connected_layers.values()):
             try:
                 layer.dataChanged.disconnect(self._resample)
