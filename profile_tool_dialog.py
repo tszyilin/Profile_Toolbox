@@ -118,11 +118,6 @@ class ProfileToolDialog(QDialog):
         self.y_field_combo.currentIndexChanged.connect(self._update_chart)
         toolbar_row.addWidget(self.y_field_combo)
 
-        self.interp_check = QCheckBox('Interpolated profile')
-        self.interp_check.setChecked(True)
-        self.interp_check.toggled.connect(self._update_chart)
-        toolbar_row.addWidget(self.interp_check)
-
         self.export_format_combo = QComboBox()
         self.export_format_combo.addItems(['Graph - PNG', 'Graph - SVG', 'Graph - PDF'])
         toolbar_row.addWidget(self.export_format_combo)
@@ -572,16 +567,11 @@ class ProfileToolDialog(QDialog):
 
         self.samples = self._series[0][1]
 
-        valid = [s for s in self.samples if s[2]]
         n_gaps = sum(1 for s in self.samples if not s[2])
-        if not valid:
+        if not self._apply_y_range_from_samples(self.samples):
             self.sample_status_label.setText('No valid elevation samples were found along this line.')
             self.export_to_map_btn.setEnabled(False)
             return
-
-        elevations = [e for _, e, _ in valid]
-        self.y_min.setValue(min(elevations) - 5)
-        self.y_max.setValue(max(elevations) + 5)
 
         feature_note = f', {len(geoms)} feature(s)' if len(geoms) > 1 else ''
         self.sample_status_label.setText(
@@ -595,6 +585,16 @@ class ProfileToolDialog(QDialog):
 
     # ---- Profile chart ---------------------------------------------------
 
+    def _apply_y_range_from_samples(self, samples):
+        """Recompute Y Min/Max from valid elevation samples. Returns False
+        (leaving the range untouched) if there are no valid samples."""
+        elevations = [e for _, e, ok in samples if ok]
+        if not elevations:
+            return False
+        self.y_min.setValue(min(elevations) - 5)
+        self.y_max.setValue(max(elevations) + 5)
+        return True
+
     def _sync_chart_range_from_settings(self):
         self.chart_y_min.setValue(self.y_min.value())
         self.chart_y_max.setValue(self.y_max.value())
@@ -607,7 +607,7 @@ class ProfileToolDialog(QDialog):
         if not self._series:
             return
         display_series, y_label = self._display_series()
-        self.chart.set_data(display_series, interpolated=self.interp_check.isChecked(), y_label=y_label)
+        self.chart.set_data(display_series, y_label=y_label)
         if self.y_field_combo.currentText() == 'Height':
             self.chart.set_y_range(self.chart_y_min.value(), self.chart_y_max.value())
         else:
@@ -625,6 +625,8 @@ class ProfileToolDialog(QDialog):
             return
         self._series = series
         self.samples = series[0][1]
+        self._apply_y_range_from_samples(self.samples)
+        self._sync_chart_range_from_settings()
         self._update_chart()
 
     def _on_chart_range_changed(self, _value):

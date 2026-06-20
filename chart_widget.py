@@ -46,6 +46,7 @@ class ProfileChartWidget(QWidget):
         self.axes = self.figure.add_subplot(111)
         self.axes.set_xlabel('Distance (m)')
         self.axes.set_ylabel('Elevation')
+        self.axes.grid(True, linewidth=0.5, color='lightgray')
         layout.addWidget(self.canvas)
 
         self.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
@@ -54,16 +55,18 @@ class ProfileChartWidget(QWidget):
 
     # ---- data -----------------------------------------------------------
 
-    def set_data(self, series, interpolated=True, y_label='Elevation'):
+    def set_data(self, series, y_label='Elevation'):
         """series is a list of (label, samples, color) tuples, where samples
         is a list of (distance, elevation, is_valid) and color may be None
-        to auto-assign from the matplotlib color cycle."""
+        to auto-assign from the matplotlib color cycle. Always drawn as a
+        continuous line tracing the terrain (no disconnected-dots mode)."""
         if not MATPLOTLIB_AVAILABLE:
             return
         self._series = series
         self.axes.clear()
         self.axes.set_xlabel('Distance (m)')
         self.axes.set_ylabel(y_label)
+        self.axes.grid(True, linewidth=0.5, color='lightgray')
 
         cycle_colors = matplotlib.rcParams['axes.prop_cycle'].by_key()['color']
 
@@ -78,11 +81,11 @@ class ProfileChartWidget(QWidget):
                     run_y.append(elevation)
                 else:
                     if len(run_x) >= 2:
-                        self._plot_run(run_x, run_y, interpolated, color, label if not label_used else None)
+                        self._plot_run(run_x, run_y, color, label if not label_used else None)
                         label_used = True
                     run_x, run_y = [], []
             if len(run_x) >= 2:
-                self._plot_run(run_x, run_y, interpolated, color, label if not label_used else None)
+                self._plot_run(run_x, run_y, color, label if not label_used else None)
 
         if len(series) > 1:
             self.axes.legend()
@@ -90,9 +93,8 @@ class ProfileChartWidget(QWidget):
         self._init_crosshair()
         self.canvas.draw_idle()
 
-    def _plot_run(self, x, y, interpolated, color, label=None):
-        style = '-' if interpolated else 'o'
-        self.axes.plot(x, y, style, color=color, linewidth=1.2, markersize=3, label=label)
+    def _plot_run(self, x, y, color, label=None):
+        self.axes.plot(x, y, '-', color=color, linewidth=1.2, label=label)
 
     def set_y_range(self, y_min, y_max):
         if not MATPLOTLIB_AVAILABLE or y_min is None or y_max is None or y_min >= y_max:
