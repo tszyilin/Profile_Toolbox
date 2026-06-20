@@ -2,7 +2,7 @@
 name=Profile Plot
 qgisMinimumVersion=3.0
 description=Draw or select a cross-section line, sample a DEM, and plot a georeferenced profile grid directly on the map canvas
-version=1.8
+version=1.9
 author=tszyilin
 email=tszyilin@gmail.com
 homepage=

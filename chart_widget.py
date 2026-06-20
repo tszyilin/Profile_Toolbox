@@ -22,6 +22,7 @@ class ProfileChartWidget(QWidget):
         self.mouse_move_callback = None
         self.click_callback = None
         self.show_cursor = True
+        self.snap_to_line = True
         self._series = []
         self._crosshair_v = None
         self._crosshair_h = None
@@ -154,16 +155,39 @@ class ProfileChartWidget(QWidget):
         self._crosshair_ytext.set_visible(True)
         self.canvas.draw_idle()
 
+    def _nearest_sample(self, x):
+        """Closest (distance, value) on the primary series to data-x `x`,
+        considering only valid samples. Returns None if there's nothing to
+        snap to."""
+        if not self._series:
+            return None
+        _, samples, _ = self._series[0]
+        nearest = None
+        nearest_dist = None
+        for distance, value, is_valid in samples:
+            if not is_valid:
+                continue
+            d = abs(distance - x)
+            if nearest_dist is None or d < nearest_dist:
+                nearest_dist = d
+                nearest = (distance, value)
+        return nearest
+
     def _on_mouse_move(self, event):
         if event.xdata is None or event.ydata is None:
             self.hide_crosshair()
             if self.mouse_move_callback is not None:
                 self.mouse_move_callback(None, None)
             return
+        x, y = event.xdata, event.ydata
+        if self.snap_to_line:
+            nearest = self._nearest_sample(x)
+            if nearest is not None:
+                x, y = nearest
         if self.show_cursor:
-            self._update_crosshair(event.xdata, event.ydata)
+            self._update_crosshair(x, y)
         if self.mouse_move_callback is not None:
-            self.mouse_move_callback(event.xdata, event.ydata)
+            self.mouse_move_callback(x, y)
 
     def _on_mouse_leave(self, event):
         self.hide_crosshair()

@@ -196,6 +196,10 @@ class ProfileToolDialog(QDialog):
             lambda checked: self._update_hover_marker(self._last_hover_x if checked else None)
         )
         options_form.addRow('', self.link_canvas_check)
+        self.snap_cursor_check = QCheckBox('Snap cursor to profile line')
+        self.snap_cursor_check.setChecked(True)
+        self.snap_cursor_check.toggled.connect(self._on_snap_cursor_toggled)
+        options_form.addRow('', self.snap_cursor_check)
         right.addWidget(options_box)
 
         right.addStretch(1)
@@ -636,6 +640,9 @@ class ProfileToolDialog(QDialog):
         self.chart.show_cursor = checked
         if not checked:
             self.chart.hide_crosshair()
+
+    def _on_snap_cursor_toggled(self, checked):
+        self.chart.snap_to_line = checked
 
     def _on_chart_mouse_move(self, x, y):
         self._last_hover_x = x
