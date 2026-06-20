@@ -1,11 +1,16 @@
+from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtGui import QColor
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QDoubleSpinBox, QPushButton, QCheckBox, QLabel, QLineEdit, QComboBox,
-    QMessageBox, QTabWidget, QWidget, QTableWidget, QTableWidgetItem,
-    QFileDialog,
+    QDoubleSpinBox, QSpinBox, QPushButton, QCheckBox, QLabel, QLineEdit,
+    QComboBox, QMessageBox, QTabWidget, QWidget, QTableWidget,
+    QTableWidgetItem, QAbstractItemView, QFileDialog,
 )
-from qgis.core import QgsProject, QgsMapLayerProxyModel
-from qgis.gui import QgsMapLayerComboBox
+from qgis.core import (
+    QgsProject, QgsMapLayerProxyModel, QgsVectorLayer, QgsWkbTypes,
+    QgsCoordinateTransform, QgsGeometry,
+)
+from qgis.gui import QgsMapLayerComboBox, QgsRubberBand
 
 from .map_tools import DrawLineMapTool, PickAnchorMapTool
 from .raster_sampler import sample_profile
@@ -28,10 +33,18 @@ class ProfileToolDialog(QDialog):
         self.line_geom = None
         self.line_crs = None
         self.samples = None
+        self._series = []
         self.draw_tool = None
         self.pick_tool = None
         self._previous_map_tool = None
         self.line_manager = CrossSectionLineManager()
+
+        self._last_hover_x = None
+        self._hover_marker = QgsRubberBand(self.canvas, QgsWkbTypes.PointGeometry)
+        self._hover_marker.setColor(QColor(255, 0, 0))
+        self._hover_marker.setIcon(QgsRubberBand.ICON_CIRCLE)
+        self._hover_marker.setIconSize(8)
+        self._hover_marker.reset(QgsWkbTypes.PointGeometry)
 
         self._build_ui()
 
@@ -54,11 +67,33 @@ class ProfileToolDialog(QDialog):
         tab = QWidget()
         outer = QHBoxLayout(tab)
 
-        # ---- left: chart + toolbar + crosshair readout ----
+        # ---- left: chart + Y range + toolbar + crosshair readout ----
         left = QVBoxLayout()
         self.chart = ProfileChartWidget()
         self.chart.mouse_move_callback = self._on_chart_mouse_move
-        left.addWidget(self.chart, stretch=1)
+
+        chart_row = QHBoxLayout()
+        chart_row.addWidget(self.chart, stretch=1)
+
+        y_range_col = QVBoxLayout()
+        y_range_col.addWidget(QLabel('maximum'))
+        self.chart_y_max = QDoubleSpinBox()
+        self.chart_y_max.setRange(-100_000, 100_000)
+        self.chart_y_max.setDecimals(1)
+        self.chart_y_max.setMaximumWidth(80)
+        self.chart_y_max.valueChanged.connect(self._on_chart_range_changed)
+        y_range_col.addWidget(self.chart_y_max)
+        y_range_col.addStretch(1)
+        y_range_col.addWidget(QLabel('minimum'))
+        self.chart_y_min = QDoubleSpinBox()
+        self.chart_y_min.setRange(-100_000, 100_000)
+        self.chart_y_min.setDecimals(1)
+        self.chart_y_min.setMaximumWidth(80)
+        self.chart_y_min.valueChanged.connect(self._on_chart_range_changed)
+        y_range_col.addWidget(self.chart_y_min)
+        chart_row.addLayout(y_range_col)
+
+        left.addLayout(chart_row, stretch=1)
 
         toolbar_row = QHBoxLayout()
         reset_btn = QPushButton('Reset view')
@@ -97,31 +132,14 @@ class ProfileToolDialog(QDialog):
 
         outer.addLayout(left, stretch=3)
 
-        # ---- right: range, source, options ----
+        # ---- right: source, DEM layers, options ----
         right = QVBoxLayout()
-
-        range_box = QGroupBox('Y axis range')
-        range_form = QFormLayout(range_box)
-        self.chart_y_max = QDoubleSpinBox()
-        self.chart_y_max.setRange(-100_000, 100_000)
-        self.chart_y_max.setDecimals(1)
-        self.chart_y_max.valueChanged.connect(self._on_chart_range_changed)
-        range_form.addRow('maximum', self.chart_y_max)
-        self.chart_y_min = QDoubleSpinBox()
-        self.chart_y_min.setRange(-100_000, 100_000)
-        self.chart_y_min.setDecimals(1)
-        self.chart_y_min.valueChanged.connect(self._on_chart_range_changed)
-        range_form.addRow('minimum', self.chart_y_min)
-        right.addWidget(range_box)
 
         source_box = QGroupBox('Source')
         source_layout = QVBoxLayout(source_box)
         self.line_layer_combo = QgsMapLayerComboBox()
         self.line_layer_combo.setFilters(QgsMapLayerProxyModel.LineLayer)
         source_layout.addWidget(self.line_layer_combo)
-        draw_btn = QPushButton('Draw New Line')
-        draw_btn.clicked.connect(self._activate_draw_tool)
-        source_layout.addWidget(draw_btn)
         self.line_status_label = QLabel('No line drawn yet.')
         source_layout.addWidget(self.line_status_label)
         sample_btn = QPushButton('Sample Elevation')
@@ -131,15 +149,42 @@ class ProfileToolDialog(QDialog):
         source_layout.addWidget(self.sample_status_label)
         right.addWidget(source_box)
 
+        dem_box = QGroupBox('DEM layers')
+        dem_layout = QVBoxLayout(dem_box)
+        dem_picker_row = QHBoxLayout()
+        self.dem_picker_combo = QgsMapLayerComboBox()
+        self.dem_picker_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
+        dem_picker_row.addWidget(self.dem_picker_combo)
+        self.add_dem_btn = QPushButton('Add Layer')
+        self.add_dem_btn.clicked.connect(self._on_add_dem_layer)
+        dem_picker_row.addWidget(self.add_dem_btn)
+        dem_layout.addLayout(dem_picker_row)
+
+        self.dem_table = QTableWidget(0, 3)
+        self.dem_table.setHorizontalHeaderLabels(['', 'Layer', 'Band'])
+        self.dem_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        dem_layout.addWidget(self.dem_table)
+
+        self.remove_dem_btn = QPushButton('Remove Layer')
+        self.remove_dem_btn.clicked.connect(self._on_remove_dem_layer)
+        dem_layout.addWidget(self.remove_dem_btn)
+        right.addWidget(dem_box)
+
         options_box = QGroupBox('Options')
         options_form = QFormLayout(options_box)
         self.selection_mode_combo = QComboBox()
-        self.selection_mode_combo.addItems(['Temporary polyline', 'Existing layer'])
+        self.selection_mode_combo.addItems(
+            ['Temporary polyline', 'Selected polyline', 'Selected layer', 'Create polyline']
+        )
+        self.selection_mode_combo.activated.connect(self._on_selection_mode_activated)
         options_form.addRow('Selection', self.selection_mode_combo)
         self.show_cursor_check = QCheckBox('Show cursor')
         self.show_cursor_check.setChecked(True)
         options_form.addRow('', self.show_cursor_check)
         self.link_canvas_check = QCheckBox('Link mouse position on graph with canvas')
+        self.link_canvas_check.toggled.connect(
+            lambda checked: self._update_hover_marker(self._last_hover_x if checked else None)
+        )
         options_form.addRow('', self.link_canvas_check)
         right.addWidget(options_box)
 
@@ -160,18 +205,15 @@ class ProfileToolDialog(QDialog):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        dem_box = QGroupBox('DEM')
-        dem_form = QFormLayout(dem_box)
-        self.raster_combo = QgsMapLayerComboBox()
-        self.raster_combo.setFilters(QgsMapLayerProxyModel.RasterLayer)
-        dem_form.addRow('DEM layer:', self.raster_combo)
+        sampling_box = QGroupBox('Sampling')
+        sampling_form = QFormLayout(sampling_box)
         self.sample_interval = QDoubleSpinBox()
         self.sample_interval.setRange(0.01, 100_000)
         self.sample_interval.setDecimals(2)
         self.sample_interval.setValue(10)
         self.sample_interval.setSuffix(' m')
-        dem_form.addRow('Sample interval:', self.sample_interval)
-        layout.addWidget(dem_box)
+        sampling_form.addRow('Sample interval:', self.sample_interval)
+        layout.addWidget(sampling_box)
 
         grid_box = QGroupBox('Grid / vertical scale')
         form = QFormLayout(grid_box)
@@ -238,12 +280,18 @@ class ProfileToolDialog(QDialog):
         self.line_crs = QgsProject.instance().crs()
         length = geom.length()
         self.line_status_label.setText(f'Drawn line: {length:.1f} m, {geom.constGet().nCoordinates()} vertices.')
+        self.selection_mode_combo.setCurrentText('Temporary polyline')
         self._restore_map_tool()
 
     def _restore_map_tool(self):
         self.canvas.setMapTool(self._previous_map_tool)
 
-    def _get_selected_line_geometry(self):
+    def _on_selection_mode_activated(self, index):
+        text = self.selection_mode_combo.itemText(index)
+        if text == 'Create polyline':
+            self._activate_draw_tool()
+
+    def _get_layer_combo_line_geometry(self):
         layer = self.line_layer_combo.currentLayer()
         if layer is None:
             return None, None
@@ -253,20 +301,85 @@ class ProfileToolDialog(QDialog):
             return None, None
         return feature.geometry(), layer.crs()
 
+    def _get_any_selected_line_geometry(self):
+        for layer in QgsProject.instance().mapLayers().values():
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            if layer.geometryType() != QgsWkbTypes.LineGeometry:
+                continue
+            selected = layer.selectedFeatures()
+            if selected:
+                return selected[0].geometry(), layer.crs()
+        return None, None
+
+    def _resolve_line_geometry(self):
+        mode = self.selection_mode_combo.currentText()
+        if mode == 'Selected polyline':
+            return self._get_any_selected_line_geometry()
+        elif mode == 'Selected layer':
+            return self._get_layer_combo_line_geometry()
+        # 'Temporary polyline' and 'Create polyline' (before/after a draw) both
+        # use the last resolved hand-drawn geometry.
+        return self.line_geom, self.line_crs
+
+    # ---- DEM table -------------------------------------------------------
+
+    def _on_add_dem_layer(self):
+        layer = self.dem_picker_combo.currentLayer()
+        if layer is None:
+            QMessageBox.warning(self, 'No DEM', 'Select a raster layer to add.')
+            return
+        for row in range(self.dem_table.rowCount()):
+            existing = self.dem_table.item(row, 1).data(Qt.UserRole)
+            if existing is not None and existing.id() == layer.id():
+                return
+
+        row = self.dem_table.rowCount()
+        self.dem_table.insertRow(row)
+
+        check_item = QTableWidgetItem()
+        check_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        check_item.setCheckState(Qt.Checked)
+        self.dem_table.setItem(row, 0, check_item)
+
+        name_item = QTableWidgetItem(layer.name())
+        name_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        name_item.setData(Qt.UserRole, layer)
+        self.dem_table.setItem(row, 1, name_item)
+
+        band_spin = QSpinBox()
+        band_spin.setRange(1, max(1, layer.bandCount()))
+        band_spin.setValue(1)
+        self.dem_table.setCellWidget(row, 2, band_spin)
+
+    def _on_remove_dem_layer(self):
+        rows = sorted({idx.row() for idx in self.dem_table.selectionModel().selectedRows()}, reverse=True)
+        for row in rows:
+            self.dem_table.removeRow(row)
+
+    def _checked_dem_rows(self):
+        for row in range(self.dem_table.rowCount()):
+            check_item = self.dem_table.item(row, 0)
+            if check_item.checkState() != Qt.Checked:
+                continue
+            layer = self.dem_table.item(row, 1).data(Qt.UserRole)
+            if layer is None or not layer.isValid():
+                continue
+            band = self.dem_table.cellWidget(row, 2).value()
+            yield layer, band
+
     # ---- DEM sampling ---------------------------------------------------
 
     def _sample_elevation(self):
-        geom, crs = self.line_geom, self.line_crs
-        if geom is None:
-            geom, crs = self._get_selected_line_geometry()
+        geom, crs = self._resolve_line_geometry()
 
         if geom is None:
-            QMessageBox.warning(self, 'No Line', 'Draw a line or select a line layer with a feature first.')
+            QMessageBox.warning(self, 'No Line', 'Draw a line, select a feature, or pick a line layer first.')
             return
 
-        raster_layer = self.raster_combo.currentLayer()
-        if raster_layer is None:
-            QMessageBox.warning(self, 'No DEM', 'Select a raster layer to sample elevation from.')
+        checked = list(self._checked_dem_rows())
+        if not checked:
+            QMessageBox.warning(self, 'No DEM', 'Check at least one DEM layer in the table to sample elevation from.')
             return
 
         interval = self.sample_interval.value()
@@ -288,7 +401,23 @@ class ProfileToolDialog(QDialog):
         self.line_crs = crs
         self.line_manager.ensure_layer(geom, crs.authid())
 
-        self.samples = sample_profile(geom, raster_layer, interval, crs)
+        self._series = []
+        for layer, band in checked:
+            if band > layer.bandCount():
+                QMessageBox.warning(
+                    self, 'Invalid Band',
+                    f'{layer.name()}: band {band} exceeds available bands ({layer.bandCount()}).',
+                )
+                continue
+            samples = sample_profile(geom, layer, interval, crs, band=band)
+            self._series.append((layer.name(), samples, None))
+
+        if not self._series:
+            QMessageBox.warning(self, 'No Data', 'No DEM layers could be sampled (check band settings).')
+            self.export_to_map_btn.setEnabled(False)
+            return
+
+        self.samples = self._series[0][1]
 
         valid = [s for s in self.samples if s[2]]
         n_gaps = sum(1 for s in self.samples if not s[2])
@@ -302,7 +431,7 @@ class ProfileToolDialog(QDialog):
         self.y_max.setValue(max(elevations) + 5)
 
         self.sample_status_label.setText(
-            f'{len(self.samples)} samples, {n_gaps} nodata gap(s).'
+            f'{len(checked)} DEM(s) sampled, {len(self.samples)} samples on first layer, {n_gaps} gap(s).'
         )
         self.export_to_map_btn.setEnabled(True)
 
@@ -317,21 +446,41 @@ class ProfileToolDialog(QDialog):
         self.chart_y_max.setValue(self.y_max.value())
 
     def _update_chart(self):
-        if not self.samples:
+        if not self._series:
             return
-        self.chart.set_data(self.samples, interpolated=self.interp_check.isChecked())
+        self.chart.set_data(self._series, interpolated=self.interp_check.isChecked())
         self.chart.set_y_range(self.chart_y_min.value(), self.chart_y_max.value())
 
     def _on_chart_range_changed(self, _value):
         self.chart.set_y_range(self.chart_y_min.value(), self.chart_y_max.value())
 
     def _on_chart_mouse_move(self, x, y):
+        self._last_hover_x = x
         if x is None or y is None or not self.show_cursor_check.isChecked():
             self.x_readout.setText('/')
             self.y_readout.setText('/')
+        else:
+            self.x_readout.setText(f'{x:.2f}')
+            self.y_readout.setText(f'{y:.2f}')
+        self._update_hover_marker(x)
+
+    def _update_hover_marker(self, distance):
+        if not self.link_canvas_check.isChecked() or distance is None or self.line_geom is None:
+            self._hover_marker.reset(QgsWkbTypes.PointGeometry)
             return
-        self.x_readout.setText(f'{x:.2f}')
-        self.y_readout.setText(f'{y:.2f}')
+        length = self.line_geom.length()
+        clamped = max(0.0, min(distance, length))
+        point_geom = self.line_geom.interpolate(clamped)
+        if point_geom.isEmpty():
+            self._hover_marker.reset(QgsWkbTypes.PointGeometry)
+            return
+        try:
+            dest_crs = self.canvas.mapSettings().destinationCrs()
+            transform = QgsCoordinateTransform(self.line_crs, dest_crs, QgsProject.instance())
+            map_point = transform.transform(point_geom.asPoint())
+            self._hover_marker.setToGeometry(QgsGeometry.fromPointXY(map_point), None)
+        except Exception:
+            self._hover_marker.reset(QgsWkbTypes.PointGeometry)
 
     def _on_save_chart_image(self):
         fmt_label = self.export_format_combo.currentText()
@@ -410,4 +559,5 @@ class ProfileToolDialog(QDialog):
     def closeEvent(self, event):
         if self.canvas.mapTool() in (self.draw_tool, self.pick_tool):
             self.canvas.unsetMapTool(self.canvas.mapTool())
+        self._hover_marker.reset(QgsWkbTypes.PointGeometry)
         super().closeEvent(event)

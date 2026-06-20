@@ -4,7 +4,7 @@ from qgis.core import (
 )
 
 
-def sample_profile(line_geom, raster_layer, interval, line_crs):
+def sample_profile(line_geom, raster_layer, interval, line_crs, band=1):
     """Sample elevation along line_geom at regular `interval` spacing.
 
     Distance is measured in line_crs map units so the resulting profile's
@@ -48,7 +48,7 @@ def sample_profile(line_geom, raster_layer, interval, line_crs):
             point = part.interpolate(d).asPoint()
             try:
                 raster_point = transform_to_raster.transform(QgsPointXY(point))
-                value, ok = provider.sample(raster_point, 1)
+                value, ok = provider.sample(raster_point, band)
             except Exception:
                 value, ok = None, False
             samples.append((distance_offset + d, value if ok else 0.0, bool(ok)))

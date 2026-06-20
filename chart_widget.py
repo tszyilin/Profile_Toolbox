@@ -19,7 +19,7 @@ class ProfileChartWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.mouse_move_callback = None
-        self._samples = []
+        self._series = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -46,31 +46,44 @@ class ProfileChartWidget(QWidget):
 
     # ---- data -----------------------------------------------------------
 
-    def set_data(self, samples, interpolated=True):
+    def set_data(self, series, interpolated=True):
+        """series is a list of (label, samples, color) tuples, where samples
+        is a list of (distance, elevation, is_valid) and color may be None
+        to auto-assign from the matplotlib color cycle."""
         if not MATPLOTLIB_AVAILABLE:
             return
-        self._samples = samples
+        self._series = series
         self.axes.clear()
         self.axes.set_xlabel('Distance (m)')
         self.axes.set_ylabel('Elevation')
 
-        run_x, run_y = [], []
-        for distance, elevation, is_valid in samples:
-            if is_valid:
-                run_x.append(distance)
-                run_y.append(elevation)
-            else:
-                if len(run_x) >= 2:
-                    self._plot_run(run_x, run_y, interpolated)
-                run_x, run_y = [], []
-        if len(run_x) >= 2:
-            self._plot_run(run_x, run_y, interpolated)
+        cycle_colors = matplotlib.rcParams['axes.prop_cycle'].by_key()['color']
+
+        for i, (label, samples, color) in enumerate(series):
+            if color is None:
+                color = cycle_colors[i % len(cycle_colors)] if len(series) > 1 else 'firebrick'
+            label_used = False
+            run_x, run_y = [], []
+            for distance, elevation, is_valid in samples:
+                if is_valid:
+                    run_x.append(distance)
+                    run_y.append(elevation)
+                else:
+                    if len(run_x) >= 2:
+                        self._plot_run(run_x, run_y, interpolated, color, label if not label_used else None)
+                        label_used = True
+                    run_x, run_y = [], []
+            if len(run_x) >= 2:
+                self._plot_run(run_x, run_y, interpolated, color, label if not label_used else None)
+
+        if len(series) > 1:
+            self.axes.legend()
 
         self.canvas.draw_idle()
 
-    def _plot_run(self, x, y, interpolated):
+    def _plot_run(self, x, y, interpolated, color, label=None):
         style = '-' if interpolated else 'o'
-        self.axes.plot(x, y, style, color='firebrick', linewidth=1.2, markersize=3)
+        self.axes.plot(x, y, style, color=color, linewidth=1.2, markersize=3, label=label)
 
     def set_y_range(self, y_min, y_max):
         if not MATPLOTLIB_AVAILABLE or y_min is None or y_max is None or y_min >= y_max:
