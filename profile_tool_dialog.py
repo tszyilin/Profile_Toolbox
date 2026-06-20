@@ -231,7 +231,12 @@ class ProfileToolDialog(QDialog):
         self.sample_interval.setDecimals(2)
         self.sample_interval.setValue(10)
         self.sample_interval.setSuffix(' m')
+        self.sample_interval.setEnabled(False)
         sampling_form.addRow('Sample interval:', self.sample_interval)
+        self.auto_interval_check = QCheckBox('Auto (use DEM resolution)')
+        self.auto_interval_check.setChecked(True)
+        self.auto_interval_check.toggled.connect(self._on_auto_interval_toggled)
+        sampling_form.addRow('', self.auto_interval_check)
         self.live_update_check = QCheckBox('Live update while drawing')
         self.live_update_check.setChecked(True)
         sampling_form.addRow('', self.live_update_check)
@@ -477,6 +482,30 @@ class ProfileToolDialog(QDialog):
 
     # ---- DEM sampling ---------------------------------------------------
 
+    def _on_auto_interval_toggled(self, checked):
+        self.sample_interval.setEnabled(not checked)
+        self._resample()
+
+    def _effective_sample_interval(self):
+        """Returns the sample interval to use. In auto mode this is the
+        finest pixel size among checked raster DEM layers (mirrors
+        profiletool's auto-resolution sampling); otherwise it's whatever
+        the user typed into the spinbox."""
+        if not self.auto_interval_check.isChecked():
+            return self.sample_interval.value()
+
+        pixel_sizes = [
+            min(abs(layer.rasterUnitsPerPixelX()), abs(layer.rasterUnitsPerPixelY()))
+            for layer, kind, _param, _color, _buffer in self._checked_dem_rows()
+            if kind == 'raster'
+        ]
+        interval = min(pixel_sizes) if pixel_sizes else self.sample_interval.value()
+        if abs(self.sample_interval.value() - interval) > 1e-9:
+            self.sample_interval.blockSignals(True)
+            self.sample_interval.setValue(interval)
+            self.sample_interval.blockSignals(False)
+        return interval
+
     def _collect_series(self, geom, crs, interval, label=None):
         series = []
         for layer, kind, param, color, buffer in self._checked_dem_rows():
@@ -547,7 +576,7 @@ class ProfileToolDialog(QDialog):
             self.export_to_map_btn.setEnabled(False)
             return
 
-        interval = self.sample_interval.value()
+        interval = self._effective_sample_interval()
         longest = max(g.length() for g, _c, _l in geoms)
         if int(longest / interval) + 1 > MAX_SAMPLE_COUNT:
             self.sample_status_label.setText('Line too long for this sample interval; increase the interval.')
@@ -620,7 +649,7 @@ class ProfileToolDialog(QDialog):
     def _live_resample(self, geom, crs):
         if geom.length() <= 0:
             return
-        interval = self.sample_interval.value()
+        interval = self._effective_sample_interval()
         if int(geom.length() / interval) + 1 > MAX_SAMPLE_COUNT:
             return
 
