@@ -3,16 +3,19 @@ from qgis.PyQt.QtGui import QColor
 from qgis.gui import QgsMapTool, QgsRubberBand
 from qgis.core import QgsGeometry, QgsWkbTypes
 
+from .line_selection import select_closest_line_feature
+
 
 class DrawLineMapTool(QgsMapTool):
     """Click to add vertices to a cross-section line; right-click, Enter,
     or double-click to finish. Escape cancels."""
 
-    def __init__(self, canvas, finished_callback, cancelled_callback=None):
+    def __init__(self, canvas, finished_callback, cancelled_callback=None, point_added_callback=None):
         super().__init__(canvas)
         self.canvas = canvas
         self.finished_callback = finished_callback
         self.cancelled_callback = cancelled_callback
+        self.point_added_callback = point_added_callback
         self.points = []
         self.rubber_band = QgsRubberBand(canvas, QgsWkbTypes.LineGeometry)
         self.rubber_band.setColor(QColor(255, 0, 0))
@@ -26,6 +29,8 @@ class DrawLineMapTool(QgsMapTool):
         point = self.toMapCoordinates(e.pos())
         self.points.append(point)
         self.rubber_band.setToGeometry(QgsGeometry.fromPolylineXY(self.points), None)
+        if self.point_added_callback:
+            self.point_added_callback(list(self.points))
 
     def canvasMoveEvent(self, e):
         if not self.points:
@@ -84,3 +89,37 @@ class PickAnchorMapTool(QgsMapTool):
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
             self.canvas.unsetMapTool(self)
+
+
+class SelectLineMapTool(QgsMapTool):
+    """Click a line feature on the map to use it as the profile source.
+    Stays active so the user can re-click another feature; right-click or
+    Escape restores the previous map tool."""
+
+    def __init__(self, canvas, layer_provider, selected_callback, cancelled_callback=None):
+        super().__init__(canvas)
+        self.canvas = canvas
+        self.layer_provider = layer_provider
+        self.selected_callback = selected_callback
+        self.cancelled_callback = cancelled_callback
+        self.setCursor(Qt.PointingHandCursor)
+
+    def canvasPressEvent(self, e):
+        if e.button() == Qt.RightButton:
+            self._cancel()
+            return
+        layer = self.layer_provider()
+        if layer is None:
+            return
+        point = self.toLayerCoordinates(layer, e.pos())
+        geom, crs = select_closest_line_feature(layer, point)
+        if geom is not None:
+            self.selected_callback(geom, crs)
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape:
+            self._cancel()
+
+    def _cancel(self):
+        if self.cancelled_callback:
+            self.cancelled_callback()
