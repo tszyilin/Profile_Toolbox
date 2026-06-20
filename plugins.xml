@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <plugins>
-  <pyqgis_plugin name="Profile Plot" version="1.3">
+  <pyqgis_plugin name="Profile Plot" version="1.4">
     <description>Draw or select a cross-section line, sample a DEM, and view/plot a georeferenced profile with an interactive chart</description>
     <about>Draw or select a cross-section line, sample a DEM, and view/plot a georeferenced profile with an interactive chart</about>
-    <version>1.3</version>
+    <version>1.4</version>
     <qgis_minimum_version>3.0</qgis_minimum_version>
     <homepage>https://github.com/tszyilin/Profile_Toolbox</homepage>
     <file_name>profile_tool.zip</file_name>
