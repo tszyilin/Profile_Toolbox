@@ -19,6 +19,7 @@ class ProfileChartWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.mouse_move_callback = None
+        self.click_callback = None
         self._series = []
 
         layout = QVBoxLayout(self)
@@ -43,10 +44,11 @@ class ProfileChartWidget(QWidget):
 
         self.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
         self.canvas.mpl_connect('axes_leave_event', self._on_mouse_leave)
+        self.canvas.mpl_connect('button_press_event', self._on_click)
 
     # ---- data -----------------------------------------------------------
 
-    def set_data(self, series, interpolated=True):
+    def set_data(self, series, interpolated=True, y_label='Elevation'):
         """series is a list of (label, samples, color) tuples, where samples
         is a list of (distance, elevation, is_valid) and color may be None
         to auto-assign from the matplotlib color cycle."""
@@ -55,7 +57,7 @@ class ProfileChartWidget(QWidget):
         self._series = series
         self.axes.clear()
         self.axes.set_xlabel('Distance (m)')
-        self.axes.set_ylabel('Elevation')
+        self.axes.set_ylabel(y_label)
 
         cycle_colors = matplotlib.rcParams['axes.prop_cycle'].by_key()['color']
 
@@ -114,3 +116,7 @@ class ProfileChartWidget(QWidget):
     def _on_mouse_leave(self, event):
         if self.mouse_move_callback is not None:
             self.mouse_move_callback(None, None)
+
+    def _on_click(self, event):
+        if self.click_callback is not None:
+            self.click_callback(event.xdata, event.ydata)

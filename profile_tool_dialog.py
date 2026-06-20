@@ -21,6 +21,7 @@ from .grid_builder import build_grid_layer, apply_grid_symbology
 from .profile_layer_builder import build_profile_layer, apply_profile_symbology
 from .line_manager import CrossSectionLineManager
 from .chart_widget import ProfileChartWidget
+from .profilers import PROFILE_TYPES
 
 MAX_SAMPLE_COUNT = 8000
 DEFAULT_SERIES_COLORS = [
@@ -45,6 +46,7 @@ class ProfileToolDialog(QDialog):
         self.select_tool = None
         self._previous_map_tool = None
         self.line_manager = CrossSectionLineManager()
+        self._connected_layers = {}
 
         self._last_hover_x = None
         self._hover_marker = QgsRubberBand(self.canvas, QgsWkbTypes.PointGeometry)
@@ -78,6 +80,7 @@ class ProfileToolDialog(QDialog):
         left = QVBoxLayout()
         self.chart = ProfileChartWidget()
         self.chart.mouse_move_callback = self._on_chart_mouse_move
+        self.chart.click_callback = self._on_chart_click
 
         chart_row = QHBoxLayout()
         chart_row.addWidget(self.chart, stretch=1)
@@ -109,7 +112,8 @@ class ProfileToolDialog(QDialog):
 
         toolbar_row.addWidget(QLabel('Y axis:'))
         self.y_field_combo = QComboBox()
-        self.y_field_combo.addItem('Height')
+        self.y_field_combo.addItems(sorted(PROFILE_TYPES))
+        self.y_field_combo.currentIndexChanged.connect(self._update_chart)
         toolbar_row.addWidget(self.y_field_combo)
 
         self.interp_check = QCheckBox('Interpolated profile')
@@ -237,6 +241,8 @@ class ProfileToolDialog(QDialog):
         sampling_form.addRow('Sample interval:', self.sample_interval)
         self.live_update_check = QCheckBox('Live update while drawing')
         sampling_form.addRow('', self.live_update_check)
+        self.add_point_check = QCheckBox("Save selected points in layer 'profile_points'")
+        sampling_form.addRow('', self.add_point_check)
         layout.addWidget(sampling_box)
 
         grid_box = QGroupBox('Grid / vertical scale')
@@ -360,16 +366,6 @@ class ProfileToolDialog(QDialog):
         if self.selection_mode_combo.currentText() == 'Selected layer':
             self._resample()
 
-    def _get_layer_combo_line_geometry(self):
-        layer = self.line_layer_combo.currentLayer()
-        if layer is None:
-            return None, None
-        selected = layer.selectedFeatures()
-        feature = selected[0] if selected else next(layer.getFeatures(), None)
-        if feature is None:
-            return None, None
-        return feature.geometry(), layer.crs()
-
     def _get_any_selected_line_geometry(self):
         for layer in QgsProject.instance().mapLayers().values():
             if not isinstance(layer, QgsVectorLayer):
@@ -381,15 +377,29 @@ class ProfileToolDialog(QDialog):
                 return selected[0].geometry(), layer.crs()
         return None, None
 
-    def _resolve_line_geometry(self):
+    def _resolve_line_geometries(self):
+        """Returns a list of (geom, crs, label) tuples to profile. 'Selected
+        layer' mode profiles every feature in the chosen layer (label
+        distinguishes each feature's series); other modes return a single
+        geometry with label=None."""
         mode = self.selection_mode_combo.currentText()
         if mode == 'Selected layer':
-            return self._get_layer_combo_line_geometry()
+            layer = self.line_layer_combo.currentLayer()
+            if layer is None:
+                return []
+            return [
+                (feature.geometry(), layer.crs(), f'#{feature.id()}')
+                for feature in layer.getFeatures()
+                if not feature.geometry().isEmpty()
+            ]
         if mode == 'Selected polyline' and self.line_geom is None:
-            return self._get_any_selected_line_geometry()
+            geom, crs = self._get_any_selected_line_geometry()
+            return [(geom, crs, None)] if geom is not None else []
         # 'Temporary polyline' and 'Selected polyline' (once a feature has
         # been click-selected) both use the last resolved line geometry.
-        return self.line_geom, self.line_crs
+        if self.line_geom is None:
+            return []
+        return [(self.line_geom, self.line_crs, None)]
 
     # ---- DEM table -------------------------------------------------------
 
@@ -496,7 +506,7 @@ class ProfileToolDialog(QDialog):
 
     # ---- DEM sampling ---------------------------------------------------
 
-    def _collect_series(self, geom, crs, interval):
+    def _collect_series(self, geom, crs, interval, label=None):
         series = []
         for layer, kind, param, color, buffer in self._checked_dem_rows():
             if kind == 'raster':
@@ -505,16 +515,44 @@ class ProfileToolDialog(QDialog):
                 samples = sample_profile(geom, layer, interval, crs, band=param)
             else:
                 samples = sample_profile_vector(geom, layer, param, buffer, crs)
-            series.append((layer.name(), samples, color))
+            name = layer.name() if label is None else f'{layer.name()} ({label})'
+            series.append((name, samples, color if label is None else None))
         return series
+
+    def _sync_layer_connections(self, extra_layers=()):
+        """Connect dataChanged on checked DEM layers (and any extra layers,
+        e.g. the active line layer in 'Selected layer' mode) so the profile
+        auto-refreshes when the underlying data is edited."""
+        wanted = {layer.id(): layer for layer, _kind, _p, _c, _b in self._checked_dem_rows()}
+        for layer in extra_layers:
+            if layer is not None:
+                wanted[layer.id()] = layer
+
+        for layer_id in list(self._connected_layers):
+            if layer_id not in wanted:
+                layer = self._connected_layers.pop(layer_id)
+                try:
+                    layer.dataChanged.disconnect(self._resample)
+                except (TypeError, RuntimeError):
+                    pass
+
+        for layer_id, layer in wanted.items():
+            if layer_id not in self._connected_layers:
+                layer.dataChanged.connect(self._resample)
+                self._connected_layers[layer_id] = layer
 
     def _resample(self):
         """Re-sample and re-plot from the current line and checked DEM
         layers. Called automatically whenever the line or DEM table change
         (no explicit "Sample Elevation" button, matching profiletool's
         always-live behaviour)."""
-        geom, crs = self._resolve_line_geometry()
-        if geom is None or geom.length() <= 0:
+        mode = self.selection_mode_combo.currentText()
+        self._sync_layer_connections(
+            extra_layers=(self.line_layer_combo.currentLayer(),) if mode == 'Selected layer' else ()
+        )
+
+        geoms = [(g, c, l) for g, c, l in self._resolve_line_geometries() if g is not None and g.length() > 0]
+        if not geoms:
             self.sample_status_label.setText('No samples yet.')
             self.export_to_map_btn.setEnabled(False)
             return
@@ -526,15 +564,19 @@ class ProfileToolDialog(QDialog):
             return
 
         interval = self.sample_interval.value()
-        if int(geom.length() / interval) + 1 > MAX_SAMPLE_COUNT:
+        longest = max(g.length() for g, _c, _l in geoms)
+        if int(longest / interval) + 1 > MAX_SAMPLE_COUNT:
             self.sample_status_label.setText('Line too long for this sample interval; increase the interval.')
             return
 
-        self.line_geom = geom
-        self.line_crs = crs
-        self.line_manager.ensure_layer(geom, crs.authid())
+        primary_geom, primary_crs, _label = geoms[0]
+        self.line_geom = primary_geom
+        self.line_crs = primary_crs
+        self.line_manager.ensure_layer(primary_geom, primary_crs.authid())
 
-        self._series = self._collect_series(geom, crs, interval)
+        self._series = []
+        for geom, crs, label in geoms:
+            self._series.extend(self._collect_series(geom, crs, interval, label=label))
         if not self._series:
             self.sample_status_label.setText('No DEM layers could be sampled (check band/field settings).')
             self.export_to_map_btn.setEnabled(False)
@@ -553,8 +595,9 @@ class ProfileToolDialog(QDialog):
         self.y_min.setValue(min(elevations) - 5)
         self.y_max.setValue(max(elevations) + 5)
 
+        feature_note = f', {len(geoms)} feature(s)' if len(geoms) > 1 else ''
         self.sample_status_label.setText(
-            f'{len(checked)} DEM(s) sampled, {len(self.samples)} samples on first layer, {n_gaps} gap(s).'
+            f'{len(checked)} DEM(s) sampled{feature_note}, {len(self.samples)} samples on first layer, {n_gaps} gap(s).'
         )
         self.export_to_map_btn.setEnabled(True)
 
@@ -568,11 +611,19 @@ class ProfileToolDialog(QDialog):
         self.chart_y_min.setValue(self.y_min.value())
         self.chart_y_max.setValue(self.y_max.value())
 
+    def _display_series(self):
+        profiler, y_label = PROFILE_TYPES[self.y_field_combo.currentText()]
+        return [(name, profiler(samples), color) for name, samples, color in self._series], y_label
+
     def _update_chart(self):
         if not self._series:
             return
-        self.chart.set_data(self._series, interpolated=self.interp_check.isChecked())
-        self.chart.set_y_range(self.chart_y_min.value(), self.chart_y_max.value())
+        display_series, y_label = self._display_series()
+        self.chart.set_data(display_series, interpolated=self.interp_check.isChecked(), y_label=y_label)
+        if self.y_field_combo.currentText() == 'Height':
+            self.chart.set_y_range(self.chart_y_min.value(), self.chart_y_max.value())
+        else:
+            self.chart.reset_view()
 
     def _live_resample(self, geom, crs):
         if geom.length() <= 0:
@@ -586,7 +637,7 @@ class ProfileToolDialog(QDialog):
             return
         self._series = series
         self.samples = series[0][1]
-        self.chart.set_data(self._series, interpolated=self.interp_check.isChecked())
+        self._update_chart()
 
     def _on_chart_range_changed(self, _value):
         self.chart.set_y_range(self.chart_y_min.value(), self.chart_y_max.value())
@@ -600,6 +651,39 @@ class ProfileToolDialog(QDialog):
             self.x_readout.setText(f'{x:.2f}')
             self.y_readout.setText(f'{y:.2f}')
         self._update_hover_marker(x)
+
+    def _on_chart_click(self, x, _y):
+        if x is None or not self.add_point_check.isChecked() or not self.samples or self.line_geom is None:
+            return
+        valid = [s for s in self.samples if s[2]]
+        if not valid:
+            return
+        distance, elevation, _ok = min(valid, key=lambda s: abs(s[0] - x))
+        self._add_profile_point(distance, elevation)
+
+    def _add_profile_point(self, distance, elevation):
+        layer = self._get_profile_points_layer()
+        point = self.line_geom.interpolate(distance).asPoint()
+        feature = QgsFeature(layer.fields())
+        feature.setGeometry(QgsGeometry.fromPointXY(point))
+        feature.setAttributes([distance, elevation])
+        layer.dataProvider().addFeatures([feature])
+        layer.updateExtents()
+        layer.triggerRepaint()
+        self.iface.messageBar().pushSuccess('Profile Plot', f'Point added at distance {distance:.2f} m.')
+
+    def _get_profile_points_layer(self):
+        project = QgsProject.instance()
+        for layer in project.mapLayers().values():
+            if layer.name() == 'profile_points':
+                return layer
+        crs_authid = self.line_crs.authid() if self.line_crs else project.crs().authid()
+        layer = QgsVectorLayer(f'Point?crs={crs_authid}', 'profile_points', 'memory')
+        provider = layer.dataProvider()
+        provider.addAttributes([QgsField('d', QVariant.Double), QgsField('z', QVariant.Double)])
+        layer.updateFields()
+        project.addMapLayer(layer)
+        return layer
 
     def _update_hover_marker(self, distance):
         if not self.link_canvas_check.isChecked() or distance is None or self.line_geom is None:
@@ -741,4 +825,10 @@ class ProfileToolDialog(QDialog):
         if self.canvas.mapTool() in (self.draw_tool, self.pick_tool, self.select_tool):
             self.canvas.unsetMapTool(self.canvas.mapTool())
         self._hover_marker.reset(QgsWkbTypes.PointGeometry)
+        for layer in list(self._connected_layers.values()):
+            try:
+                layer.dataChanged.disconnect(self._resample)
+            except (TypeError, RuntimeError):
+                pass
+        self._connected_layers.clear()
         super().closeEvent(event)
