@@ -1,0 +1,36 @@
+[general]
+name=Profile Plot +
+qgisMinimumVersion=3.40
+qgisMaximumVersion=4.99
+description=Plots terrain profile
+about=Plots profile lines from raster layers or from a point vector layer with an elevation field. Reports profile statistics - length, elevation change, max/min elevation with chainage, gradient and equal-area slope - for the whole line or for a segment picked on the plot. Supports multiple lines, graph export to svg, pdf, png or csv, and 3D polyline export to dxf. Derived from Profile Tool by Borys Jurgiel, Patrice Verchere, Etienne Tourigny and Javier Becerra, under the GPL-2.
+category=Raster
+version=1.0
+author=Safin
+email=javier@panoimagen.com
+supportsQt6=True
+experimental=False
+deprecated=False
+
+changelog=
+    1.0 : First release of Profile Plot +
+        - Statistics panel between the plot and the layer list: total length, elevation
+          change, max/min elevation with chainage, gradient in % and m/m, equal-area slope
+        - Segment panel: click the plot to set the start, click again to set the end, and
+          read the same statistics for just that stretch, with the span shaded on the plot
+        - Equal-area slope solved analytically, so scipy is not needed
+        - "Show stats" switch in Options hides the whole panel and gives the space to the plot
+        - Fix: the crosshair readout never appeared, because the plot items were matched by a
+          hard-coded module path that only resolved when the folder was named "profiletool"
+        - Fix: the plot click handler was connected once per redraw and never disconnected,
+          so a single click fired it repeatedly
+    -----------------------------------------------------------------
+    Based on Profile Tool 4.3.4 by Borys Jurgiel, Patrice Verchere, Etienne Tourigny
+    and Javier Becerra - https://github.com/PANOimagen/profiletool
+
+tags=raster, vector, profile
+
+homepage=https://github.com/PANOimagen/profiletool
+tracker=https://github.com/PANOimagen/profiletool/issues
+repository=https://github.com/PANOimagen/profiletool
+icon=icons/profileIcon.png
