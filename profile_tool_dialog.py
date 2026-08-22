@@ -22,6 +22,7 @@ from .profile_layer_builder import build_profile_layer, apply_profile_symbology
 from .line_manager import CrossSectionLineManager
 from .chart_widget import ProfileChartWidget
 from .profilers import PROFILE_TYPES
+from .profile_stats import compute_stats
 
 MAX_SAMPLE_COUNT = 8000
 DEFAULT_SERIES_COLORS = [
@@ -31,6 +32,17 @@ DEFAULT_SERIES_COLORS = [
 
 
 class ProfileToolDialog(QDialog):
+    STATS_ROWS = [
+        'Total length (m)',
+        'Max elevation (m)',
+        '  at chainage (m)',
+        'Min elevation (m)',
+        '  at chainage (m)',
+        'Mean slope (%)',
+        'Mean slope (m/km)',
+        'Equal-area slope (m/km)',
+    ]
+
     def __init__(self, iface, parent=None):
         super().__init__(parent)
         self.iface = iface
@@ -138,7 +150,10 @@ class ProfileToolDialog(QDialog):
         readout_row.addWidget(self.y_readout)
         left.addLayout(readout_row)
 
-        outer.addLayout(left, stretch=3)
+        outer.addLayout(left, stretch=4)
+
+        # ---- middle: per-series summary statistics ----
+        outer.addWidget(self._build_stats_box(), stretch=1)
 
         # ---- right: source, DEM layers, options ----
         right = QVBoxLayout()
@@ -206,6 +221,48 @@ class ProfileToolDialog(QDialog):
         outer.addLayout(right, stretch=1)
 
         return tab
+
+    def _build_stats_box(self):
+        box = QGroupBox('Statistics')
+        layout = QVBoxLayout(box)
+        self.stats_table = QTableWidget(len(self.STATS_ROWS), 0)
+        self.stats_table.setVerticalHeaderLabels(self.STATS_ROWS)
+        self.stats_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.stats_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.stats_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.stats_table)
+        return box
+
+    def _update_stats_panel(self):
+        """Fill the statistics table with one column per plotted series."""
+        table = self.stats_table
+        table.clearContents()
+        table.setColumnCount(len(self._series))
+        table.setHorizontalHeaderLabels([name for name, _s, _c in self._series])
+
+        for col, (_name, samples, _color) in enumerate(self._series):
+            stats = compute_stats(samples)
+            if stats is None:
+                values = ['/'] * len(self.STATS_ROWS)
+            else:
+                eas = stats['eas_m_per_km']
+                values = [
+                    f"{stats['length']:.1f}",
+                    f"{stats['max_z']:.2f}",
+                    f"{stats['max_at']:.1f}",
+                    f"{stats['min_z']:.2f}",
+                    f"{stats['min_at']:.1f}",
+                    f"{stats['mean_slope_pct']:.2f}",
+                    f"{stats['mean_slope_m_per_km']:.2f}",
+                    '/' if eas is None else f'{eas:.2f}',
+                ]
+            for row, value in enumerate(values):
+                table.setItem(row, col, QTableWidgetItem(value))
+        table.resizeColumnsToContents()
+
+    def _clear_stats_panel(self):
+        self.stats_table.clearContents()
+        self.stats_table.setColumnCount(0)
 
     def _build_table_tab(self):
         tab = QWidget()
@@ -568,12 +625,14 @@ class ProfileToolDialog(QDialog):
         if not geoms:
             self.sample_status_label.setText('No samples yet.')
             self.export_to_map_btn.setEnabled(False)
+            self._clear_stats_panel()
             return
 
         checked = list(self._checked_dem_rows())
         if not checked:
             self.sample_status_label.setText('No DEM layers checked.')
             self.export_to_map_btn.setEnabled(False)
+            self._clear_stats_panel()
             return
 
         interval = self._effective_sample_interval()
@@ -596,6 +655,7 @@ class ProfileToolDialog(QDialog):
         if not self._series:
             self.sample_status_label.setText('No DEM layers could be sampled (check band/field settings).')
             self.export_to_map_btn.setEnabled(False)
+            self._clear_stats_panel()
             return
 
         self.samples = self._series[0][1]
@@ -604,6 +664,7 @@ class ProfileToolDialog(QDialog):
         if not self._apply_y_range_from_samples(self.samples):
             self.sample_status_label.setText('No valid elevation samples were found along this line.')
             self.export_to_map_btn.setEnabled(False)
+            self._clear_stats_panel()
             return
 
         feature_note = f', {len(geoms)} feature(s)' if len(geoms) > 1 else ''
@@ -614,6 +675,7 @@ class ProfileToolDialog(QDialog):
 
         self._sync_chart_range_from_settings()
         self._update_chart()
+        self._update_stats_panel()
         self._populate_samples_table()
 
     # ---- Profile chart ---------------------------------------------------
@@ -661,6 +723,7 @@ class ProfileToolDialog(QDialog):
         self._apply_y_range_from_samples(self.samples)
         self._sync_chart_range_from_settings()
         self._update_chart()
+        self._update_stats_panel()
 
     def _on_chart_range_changed(self, _value):
         self.chart.set_y_range(self.chart_y_min.value(), self.chart_y_max.value())

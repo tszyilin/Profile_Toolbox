@@ -11,7 +11,8 @@ class ProfileTool:
         self.dialog = None
 
     def initGui(self):
-        self.action = QAction('Profile Plot', self.iface.mainWindow())
+        icon = QIcon(os.path.join(self.plugin_dir, 'icons', 'profileIcon.png'))
+        self.action = QAction(icon, 'Profile Plot', self.iface.mainWindow())
         self.action.triggered.connect(self.run)
         self.iface.addPluginToMenu('&Profile Plot', self.action)
         self.iface.addToolBarIcon(self.action)
