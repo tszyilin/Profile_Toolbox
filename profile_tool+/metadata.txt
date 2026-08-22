@@ -30,7 +30,7 @@ changelog=
 
 tags=raster, vector, profile
 
-homepage=https://github.com/PANOimagen/profiletool
-tracker=https://github.com/PANOimagen/profiletool/issues
-repository=https://github.com/PANOimagen/profiletool
+homepage=https://github.com/tszyilin/Profile_Toolbox_Plus
+tracker=https://github.com/tszyilin/Profile_Toolbox_Plus/issues
+repository=https://github.com/tszyilin/Profile_Toolbox_Plus
 icon=icons/profileIcon.png
