@@ -69,8 +69,8 @@ class ProfilePlugin:
         self.aboutAction.triggered.connect(self.about)
         # add toolbar button and menu item
         self.iface.addToolBarIcon(self.action)
-        self.iface.addPluginToMenu("&Profile Plot +", self.action)
-        self.iface.addPluginToMenu("&Profile Plot +", self.aboutAction)
+        self.iface.addPluginToMenu("&Profile Tool +", self.action)
+        self.iface.addPluginToMenu("&Profile Tool +", self.aboutAction)
 
     def unload(self):
         with suppress(AttributeError, RuntimeError, TypeError):
@@ -78,8 +78,8 @@ class ProfilePlugin:
             self.canvas.mapToolSet.disconnect(self.mapToolChanged)
 
         self.iface.removeToolBarIcon(self.action)
-        self.iface.removePluginMenu("&Profile Plot +", self.action)
-        self.iface.removePluginMenu("&Profile Plot +", self.aboutAction)
+        self.iface.removePluginMenu("&Profile Tool +", self.action)
+        self.iface.removePluginMenu("&Profile Tool +", self.aboutAction)
 
     def tr(self, message):
         return QCoreApplication.translate("ProfilePlugin", message)

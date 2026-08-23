@@ -1,5 +1,5 @@
 [general]
-name=Profile Plot +
+name=Profile Tool +
 qgisMinimumVersion=3.40
 qgisMaximumVersion=4.99
 description=Plots terrain profile
@@ -13,7 +13,7 @@ experimental=False
 deprecated=False
 
 changelog=
-    1.0 : First release of Profile Plot +
+    1.0 : First release of Profile Tool +
         - Statistics panel between the plot and the layer list: total length, elevation
           change, max/min elevation with chainage, gradient in % and m/m, equal-area slope
         - Segment panel: click the plot to set the start, click again to set the end, and
