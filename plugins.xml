@@ -4,7 +4,7 @@
     <description>Plots terrain profile</description>
     <about>Plots profile lines from raster layers or from a point vector layer with an elevation field. Reports profile statistics - length, elevation change, max/min elevation with chainage, gradient and equal-area slope - for the whole line or for a segment picked on the plot. Supports multiple lines, graph export to svg, pdf, png or csv, and 3D polyline export to dxf. Derived from Profile Tool by Borys Jurgiel, Patrice Verchere, Etienne Tourigny and Javier Becerra, under the GPL-2.</about>
     <version>1.0</version>
-    <qgis_minimum_version>3.40</qgis_minimum_version>
+    <qgis_minimum_version>3.2</qgis_minimum_version>
     <qgis_maximum_version>4.99</qgis_maximum_version>
     <homepage>https://github.com/tszyilin/Profile_Toolbox_Plus</homepage>
     <file_name>profile_tool+.zip</file_name>
