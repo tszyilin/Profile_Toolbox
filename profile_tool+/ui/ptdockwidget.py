@@ -164,6 +164,9 @@ class PTDockWidget(QDockWidget, FormClass):
 
         self.cbSameAxisScale.stateChanged.connect(self._onSameAxisScaleStateChanged)
 
+        # "Save drawn line as layer" button, in the Options group.
+        self._buildSaveDrawnLineButton()
+
     # ********************************************************************************
     # init things ****************************************************************
     # ********************************************************************************
@@ -571,6 +574,61 @@ class PTDockWidget(QDockWidget, FormClass):
         # vl.setCustomProperty("labeling/enabled", "true")
         # show layer
         QgsProject.instance().addMapLayer(vl)
+
+    # ********************************************************************************
+    # save drawn line ****************************************************************
+    # ********************************************************************************
+
+    def _buildSaveDrawnLineButton(self):
+        self.butSaveDrawnLine = QPushButton(self.tr("Save drawn line as layer"))
+        self.butSaveDrawnLine.setToolTip(
+            self.tr(
+                "Save the polyline you just drew (Temporary polyline mode) as a "
+                "scratch line layer in the project. Right-click the layer in QGIS "
+                "to export it to a file."
+            )
+        )
+        self.butSaveDrawnLine.clicked.connect(self.saveDrawnLineAsLayer)
+        layout = self.groupBox.layout()
+        if isinstance(layout, QGridLayout):
+            layout.addWidget(self.butSaveDrawnLine, 3, 0, 1, 2)
+        elif layout is not None:
+            layout.addWidget(self.butSaveDrawnLine)
+
+    def saveDrawnLineAsLayer(self):
+        points = list(getattr(self.profiletoolcore, "pointstoDraw", None) or [])
+        if len(points) < 2:
+            self.iface.messageBar().pushMessage(
+                "Profile Tool +",
+                self.tr("Draw a polyline first (Temporary polyline mode)."),
+                level=Qgis.MessageLevel.Info,
+            )
+            return
+
+        crs_authid = QgsProject.instance().crs().authid() or "EPSG:4326"
+        vl = QgsVectorLayer(
+            "LineString?crs={}".format(crs_authid),
+            "ProfileTool_line",
+            "memory",
+        )
+        pr = vl.dataProvider()
+        pr.addAttributes([QgsField("id", QVariant.Int)])
+        vl.updateFields()
+
+        feat = QgsFeature(vl.fields())
+        feat.setGeometry(
+            QgsGeometry.fromPolylineXY([QgsPointXY(x, y) for x, y in points])
+        )
+        feat.setAttributes([1])
+        pr.addFeatures([feat])
+        vl.updateExtents()
+        QgsProject.instance().addMapLayer(vl)
+
+        self.iface.messageBar().pushMessage(
+            "Profile Tool +",
+            self.tr("Saved drawn line to layer \"{}\".").format(vl.name()),
+            level=Qgis.MessageLevel.Success,
+        )
 
     # ********************************************************************************
     # other things ****************************************************************
