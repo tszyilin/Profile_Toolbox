@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <plugins>
-  <pyqgis_plugin name="Profile Tool +" version="1.1">
+  <pyqgis_plugin name="Profile Tool +" version="1.2">
     <description>Plots terrain profile</description>
-    <about>Plots profile lines from raster layers or from a point vector layer with an elevation field. Reports profile statistics - length, elevation change, max/min elevation with chainage, gradient and equal-area slope - for the whole line or for a segment picked on the plot. Supports multiple lines, graph export to svg, pdf, png or csv, and 3D polyline export to dxf. Derived from Profile Tool by Borys Jurgiel, Patrice Verchere, Etienne Tourigny and Javier Becerra, under the GPL-2.</about>
-    <version>1.1</version>
+    <about>Plots profile lines from raster layers or from a point vector layer with an elevation field. Reports profile statistics - length, elevation change, max/min elevation with chainage, gradient, equal-area slope and hydraulic slope - for the whole line or for a segment picked on the plot. Supports multiple lines, graph export to svg, pdf, png or csv, and 3D polyline export to dxf. Derived from Profile Tool by Borys Jurgiel, Patrice Verchere, Etienne Tourigny and Javier Becerra, under the GPL-2.</about>
+    <version>1.2</version>
     <qgis_minimum_version>3.2</qgis_minimum_version>
     <qgis_maximum_version>4.99</qgis_maximum_version>
     <homepage>https://github.com/tszyilin/Profile_Toolbox_Plus</homepage>
@@ -13,7 +13,7 @@
     <download_url>https://raw.githubusercontent.com/tszyilin/Profile_Toolbox_Plus/main/profile_tool%2B.zip</download_url>
     <uploaded_by>tszyilin</uploaded_by>
     <create_date>2026-06-19T00:00:00.000000</create_date>
-    <update_date>2026-08-31T00:00:00.000000</update_date>
+    <update_date>2026-08-31T00:00:01.000000</update_date>
     <experimental>False</experimental>
     <deprecated>False</deprecated>
     <tracker>https://github.com/tszyilin/Profile_Toolbox_Plus/issues</tracker>

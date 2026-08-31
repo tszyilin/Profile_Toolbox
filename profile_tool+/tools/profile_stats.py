@@ -89,6 +89,9 @@ def compute_stats(distances, elevations):
         "gradient_m_per_m": gradient,
         "gradient_pct": gradient * 100.0,
         "eas_m_per_km": equal_area_slope([d / 1000.0 for d in ds], zs),
+        # Signed upstream-to-downstream drop over length, matching the
+        # "hydraulic_slope" reported by the equal-area-slope web tool.
+        "hydraulic_slope_m_per_m": (zs[0] - zs[-1]) / length,
     }
 
 

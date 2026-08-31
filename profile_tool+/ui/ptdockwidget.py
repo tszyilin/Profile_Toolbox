@@ -651,6 +651,7 @@ class PTDockWidget(QDockWidget, FormClass):
         "Min elevation (m @ ch)",
         "Gradient",
         "Equal-area slope (m/km)",
+        "Hydraulic slope (m/m)",
     ]
 
     # The segment table reports the same metrics as the whole-profile one, so
@@ -767,6 +768,7 @@ class PTDockWidget(QDockWidget, FormClass):
                 stats["gradient_pct"], stats["gradient_m_per_m"]
             ),
             "/" if eas is None else "{:.2f}".format(eas),
+            "{:.6f}".format(stats["hydraulic_slope_m_per_m"]),
         ]
 
     def _fillTable(self, table, profiles, values_for):
